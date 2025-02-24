@@ -27,13 +27,51 @@ export default function Dashboard() {
         const sites = await pb.collection("wedding_sites").getFullList({ fields: "siteId" });
         const ids = sites.map((site) => site.siteId);
         setSiteIds(ids);
-        if (ids.length > 0) setSiteId(ids[0]);
+        if (ids.length > 0 && !isNewSite) {
+          setSiteId(ids[0]);
+        }
       } catch (error) {
         console.error("Error fetching site IDs:", error);
       }
     };
+
     fetchSiteIds();
   }, []);
+
+  // Fetch site data when siteId changes
+  useEffect(() => {
+    if (siteId) {
+      const fetchSiteData = async () => {
+        try {
+          const site = await pb.collection("wedding_sites").getFirstListItem(`siteId="${siteId}"`, { requestKey: null });
+          if (site && site.data) {
+            setFormData(site.data); // Populate formData with the existing data from PocketBase
+            // Preload previews for existing image URLs
+            Object.entries(site.data).forEach(([page, pageData]) => {
+              Object.entries(pageData).forEach(([key, value]) => {
+                if (typeof value === "string" && (key === "heroImage" || key === "bgImage" || key === "storyImage")) {
+                  setPreviews((prev) => ({
+                    ...prev,
+                    [`${page}-${key}`]: value,
+                  }));
+                } else if (key === "images" && Array.isArray(value)) {
+                  value.forEach((img: string, i: number) => {
+                    setPreviews((prev) => ({
+                      ...prev,
+                      [`${page}-${key}-${i}`]: img,
+                    }));
+                  });
+                }
+              });
+            });
+          }
+        } catch (error) {
+          console.error("Error fetching site data:", error);
+        }
+      };
+      fetchSiteData();
+    }
+  }, [siteId]);
 
   const handleSubmit = async (page: string) => {
     if (!siteId) {
@@ -50,10 +88,17 @@ export default function Dashboard() {
     const pageData = formData[page] || {};
     Object.entries(pageData).forEach(([key, value]) => {
       if (key === "images" && Array.isArray(value)) {
-        value.forEach((file: File, index: number) => {
-          if (file) form.append(`images[${index}]`, file);
+        value.forEach((file: File | string, index: number) => {
+          if (file instanceof File) {
+            form.append(`images[${index}]`, file);
+          } else if (typeof file === "string") {
+            // Handle existing image URLs by sending them as strings
+            form.append(`images[${index}]`, file);
+          }
         });
-      } else if (key !== "active") {
+      } else if (key !== "active" && value instanceof File) {
+        form.append(key, value);
+      } else if (key !== "active" && typeof value !== "object") {
         form.append(key, value);
       }
     });
@@ -86,6 +131,13 @@ export default function Dashboard() {
     }
   };
 
+  const handleTextChange = (page: string, field: string, value: string) => {
+    setFormData({
+      ...formData,
+      [page]: { ...formData[page], [field]: value },
+    });
+  };
+
   const toggleActive = (page: string) => {
     const pageData = formData[page] || {};
     setFormData({ ...formData, [page]: { ...pageData, active: !pageData.active } });
@@ -114,13 +166,20 @@ export default function Dashboard() {
       return <div className="text-center text-destructive">Navbar not found for template {template}</div>;
     }
 
-    // Convert File objects to preview URLs for the template props
+    // Convert File objects or strings to preview URLs/paths for the template props
     const previewProps = Object.fromEntries(
       Object.entries(pageData).map(([key, value]) => {
         if (key === "images" && Array.isArray(value)) {
-          return [key, value.map((file: File, i: number) => previews[`${selectedPage}-${key}-${i}`] || "")];
+          return [
+            key,
+            value.map((file: File | string, i: number) =>
+              typeof file === "string" ? file : previews[`${selectedPage}-${key}-${i}`] || ""
+            ),
+          ];
         } else if (value instanceof File) {
           return [key, previews[`${selectedPage}-${key}`] || ""];
+        } else if (typeof value === "string") {
+          return [key, value]; // Use the string (e.g., image URL) directly
         }
         return [key, value];
       })
@@ -171,7 +230,15 @@ export default function Dashboard() {
             <div className="flex items-center space-x-2">
               <Button
                 variant={isNewSite ? "outline" : "default"}
-                onClick={() => setIsNewSite(false)}
+                onClick={() => {
+                  setIsNewSite(false);
+                  if (siteIds.length > 0) {
+                    setSiteId(siteIds[0]); // Revert to first existing site if any
+                  } else {
+                    setSiteId(""); // Clear if no existing sites
+                  }
+                  // Do not clear data here to retain existing site data when switching back
+                }}
               >
                 Select Existing Site
               </Button>
@@ -179,7 +246,10 @@ export default function Dashboard() {
                 variant={isNewSite ? "default" : "outline"}
                 onClick={() => {
                   setIsNewSite(true);
-                  setSiteId("");
+                  setSiteId(""); // Clear siteId
+                  setFormData({}); // Clear form data
+                  setPreviews({}); // Clear previews
+                  setSelectedPage("home"); // Reset to default page
                 }}
               >
                 Create New Site
@@ -247,12 +317,8 @@ export default function Dashboard() {
                             <Input
                               key={field}
                               placeholder={field}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  [page]: { ...formData[page], [field]: e.target.value },
-                                })
-                              }
+                              value={formData[page]?.[field] || ""}
+                              onChange={(e) => handleTextChange(page, field, e.target.value)}
                             />
                           );
                         }
@@ -261,12 +327,8 @@ export default function Dashboard() {
                             <Textarea
                               key={field}
                               placeholder={field}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  [page]: { ...formData[page], [field]: e.target.value },
-                                })
-                              }
+                              value={formData[page]?.[field] || ""}
+                              onChange={(e) => handleTextChange(page, field, e.target.value)}
                             />
                           );
                         }
@@ -282,6 +344,14 @@ export default function Dashboard() {
                             {previews[`${page}-${field.name}`] && (
                               <img
                                 src={previews[`${page}-${field.name}`]}
+                                alt={`${field.name} preview`}
+                                className="w-32 h-32 object-cover rounded"
+                              />
+                            )}
+                            {/* Display existing image if no new file is uploaded */}
+                            {!previews[`${page}-${field.name}`] && formData[page]?.[field.name] && (
+                              <img
+                                src={formData[page]?.[field.name]}
                                 alt={`${field.name} preview`}
                                 className="w-32 h-32 object-cover rounded"
                               />
@@ -302,6 +372,14 @@ export default function Dashboard() {
                                 {previews[`${page}-${field.name}-${i}`] && (
                                   <img
                                     src={previews[`${page}-${field.name}-${i}`]}
+                                    alt={`Image ${i + 1}`}
+                                    className="w-32 h-32 object-cover rounded"
+                                  />
+                                )}
+                                {/* Display existing image if no new file is uploaded */}
+                                {!previews[`${page}-${field.name}-${i}`] && formData[page]?.[field.name]?.[i] && (
+                                  <img
+                                    src={formData[page]?.[field.name]?.[i]}
                                     alt={`Image ${i + 1}`}
                                     className="w-32 h-32 object-cover rounded"
                                   />
