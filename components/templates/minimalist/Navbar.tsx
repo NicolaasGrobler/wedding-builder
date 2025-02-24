@@ -6,14 +6,14 @@ import { buttonVariants } from "@/components/ui/button";
 
 interface MinimalistNavbarProps {
   siteId: string;
-  pages: Record<string, { active: boolean }>;
+  pages: Record<string, { active: boolean; displayName?: string }>;
 }
 
 export default function MinimalistNavbar({ siteId, pages }: MinimalistNavbarProps) {
   const pathname = usePathname();
   const activePages = Object.entries(pages)
     .filter(([_, pageData]) => pageData.active)
-    .map(([page]) => page);
+    .map(([page, pageData]) => ({ page, displayName: pageData.displayName || page.charAt(0).toUpperCase() + page.slice(1) }));
 
   return (
     <nav className="bg-white border-b p-4">
@@ -22,7 +22,7 @@ export default function MinimalistNavbar({ siteId, pages }: MinimalistNavbarProp
           {pages.home?.title || "Wedding Site"}
         </Link>
         <div className="space-x-4">
-          {activePages.map((page) => {
+          {activePages.map(({ page, displayName }) => {
             const href = `/sites/${siteId}/${page}`;
             const isActive = pathname === href;
             return (
@@ -34,10 +34,7 @@ export default function MinimalistNavbar({ siteId, pages }: MinimalistNavbarProp
                   "text-gray-800 hover:text-gray-600"
                 )}
               >
-                {page
-                  .split("-")
-                  .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-                  .join(" ")}
+                {displayName}
               </Link>
             );
           })}
